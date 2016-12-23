@@ -154,6 +154,7 @@ var ACTIONS = {
       if (!!config.statusapi && config.statusapi.enabled) {
         var server = http.createServer(function(request, response) {
           response.writeHead(200, {'Content-Type': 'application/json'});
+          var currentTime = Number(new Date());
           var maxStart = 0;
           var numContracts = 0;
           var totalSize = 0;
@@ -161,6 +162,9 @@ var ACTIONS = {
           rstream.on('data', function(item) {
             Object.keys(item.contracts).forEach(function(nodeID) {
               var contract = item.contracts[nodeID];
+              if (contract.get('store_end') < currentTime) {
+                  return;
+              }
               numContracts++;
               totalSize += contract.get('data_size');
               if (contract.get('store_begin') > maxStart)
