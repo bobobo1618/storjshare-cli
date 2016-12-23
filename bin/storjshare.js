@@ -2,6 +2,7 @@
 
 'use strict';
 
+var http = require('http');
 var fs = require('fs');
 var path = require('path');
 var program = require('commander');
@@ -89,15 +90,16 @@ var ACTIONS = {
 
       var keypair = storj.KeyPair(privkey);
       var storageAdapter = storj.EmbeddedStorageAdapter(env.datadir);
+      var storageManager = storj.StorageManager(storageAdapter, {
+        maxCapacity: storj.utils.toNumberBytes(
+          config.storage.size,
+          config.storage.unit
+        )
+      });
       var farmerconf = {
         keyPair: keypair,
         paymentAddress: config.address.trim(),
-        storageManager: storj.StorageManager(storageAdapter, {
-          maxCapacity: storj.utils.toNumberBytes(
-            config.storage.size,
-            config.storage.unit
-          )
-        }),
+        storageManager: storageManager,
         rpcAddress: config.network.address,
         maxOfferConcurrency: typeof config.network.concurrency === 'undefined' ?
           storj.Farmer.DEFAULTS.maxOfferConcurrency :
@@ -147,6 +149,38 @@ var ACTIONS = {
             'telemetry reporter failed, reason: %s', err.message
           );
         }
+      }
+      // Start a basic HTTP status server.
+      if (!!config.statusapi && config.statusapi.enabled) {
+        var server = http.createServer(function(request, response) {
+          response.writeHead(200, {'Content-Type': 'application/json'});
+          var maxStart = 0;
+          var numContracts = 0;
+          var totalSize = 0;
+          var rstream = storageManager._storage.createReadStream();
+          rstream.on('data', function(item) {
+            Object.keys(item.contracts).forEach(function(nodeID) {
+              var contract = item.contracts[nodeID];
+              numContracts++;
+              totalSize += contract.get('data_size');
+              if (contract.get('store_begin') > maxStart)
+                maxStart = contract.get('store_begin');
+            });
+          });
+          rstream.on('end', function() {
+            response.end(JSON.stringify({
+              'contracts': {
+                'max_start': maxStart,
+                'total_size': totalSize,
+                'num_contracts': numContracts
+              },
+              'contact': farmer.contact,
+              'memory': process.memoryUsage(),
+              'uptime': process.uptime()
+            }));
+          });
+        });
+        server.listen(config.statusapi.port, config.statusapi.hostname);
       }
     }
 
